@@ -1,0 +1,168 @@
+name: ecommerce
+
+x-spring-service: &spring-service
+  restart: unless-stopped
+  # Cap each JVM so the whole stack fits on a laptop (JVM sizes its heap from the container limit)
+  mem_limit: 512m
+  environment: &spring-env
+    EUREKA_URL: http://discovery-server:8761/eureka
+    # Refresh the service registry every 5s (default 30s) so the local stack becomes routable faster
+    EUREKA_CLIENT_REGISTRYFETCHINTERVALSECONDS: "5"
+    KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    DB_USERNAME: postgres
+    DB_PASSWORD: postgres
+  depends_on: &spring-deps
+    discovery-server:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+
+services:
+  # ---------- Infrastructure ----------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.9.1
+    mem_limit: 768m
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 30s
+      retries: 10
+      start_period: 30s
+
+  kafka-ui:
+    image: kafbat/kafka-ui:latest
+    profiles: [tools]   # optional: docker compose --profile tools up -d
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # web UI to read the emails sent by notification-service
+      - "1025:1025"   # SMTP
+
+  # ---------- Platform ----------
+  discovery-server:
+    build:
+      context: .
+      args:
+        SERVICE: discovery-server
+    image: ecommerce/discovery-server
+    mem_limit: 512m
+    ports:
+      - "8761:8761"
+    environment:
+      EUREKA_HOSTNAME: discovery-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  api-gateway:
+    <<: *spring-service
+    build:
+      context: .
+      args:
+        SERVICE: api-gateway
+    image: ecommerce/api-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+
+  # ---------- Business services ----------
+  inventory-service:
+    <<: *spring-service
+    build:
+      context: .
+      args:
+        SERVICE: inventory-service
+    image: ecommerce/inventory-service
+    environment:
+      <<: *spring-env
+      DB_URL: jdbc:postgresql://postgres:5432/inventory_db
+
+  order-service:
+    <<: *spring-service
+    build:
+      context: .
+      args:
+        SERVICE: order-service
+    image: ecommerce/order-service
+    environment:
+      <<: *spring-env
+      DB_URL: jdbc:postgresql://postgres:5432/order_db
+
+  payment-service:
+    <<: *spring-service
+    build:
+      context: .
+      args:
+        SERVICE: payment-service
+    image: ecommerce/payment-service
+    environment:
+      <<: *spring-env
+      DB_URL: jdbc:postgresql://postgres:5432/payment_db
+      PAYMENT_MAX_AMOUNT: "5000.00"
+
+  notification-service:
+    <<: *spring-service
+    build:
+      context: .
+      args:
+        SERVICE: notification-service
+    image: ecommerce/notification-service
+    environment:
+      <<: *spring-env
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+    depends_on:
+      <<: *spring-deps
+      mailpit:
+        condition: service_started
+
+volumes:
+  postgres-data:

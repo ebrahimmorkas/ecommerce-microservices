@@ -1,6 +1,7 @@
 package com.ebrahimmorkas.ecommerce.order.client;
 
 import com.ebrahimmorkas.ecommerce.order.exception.InventoryUnavailableException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreaker;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
@@ -15,6 +16,7 @@ import java.util.List;
  * Synchronous client for inventory-service. Calls go through a Resilience4j circuit breaker so a
  * slow or failing inventory service fails fast instead of exhausting order-service threads.
  */
+@Slf4j
 @Component
 public class InventoryClient {
 
@@ -38,6 +40,7 @@ public class InventoryClient {
                         .retrieve()
                         .body(PRODUCT_LIST),
                 failure -> {
+                    log.warn("Inventory lookup failed for {}: {}", skuCodes, failure.toString());
                     throw new InventoryUnavailableException(failure);
                 });
     }
