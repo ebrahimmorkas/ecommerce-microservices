@@ -1,0 +1,79 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: inventory-service
+              uri: lb://inventory-service
+              predicates:
+                - Path=/api/products/**
+            - id: order-service
+              uri: lb://order-service
+              predicates:
+                - Path=/api/orders/**
+            - id: payment-service
+              uri: lb://payment-service
+              predicates:
+                - Path=/api/payments/**
+            # Expose each service's OpenAPI spec so one Swagger UI can document the whole platform
+            - id: inventory-service-docs
+              uri: lb://inventory-service
+              predicates:
+                - Path=/aggregate/inventory-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+            - id: order-service-docs
+              uri: lb://order-service
+              predicates:
+                - Path=/aggregate/order-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+            - id: payment-service-docs
+              uri: lb://payment-service
+              predicates:
+                - Path=/aggregate/payment-service/v3/api-docs
+              filters:
+                - SetPath=/v3/api-docs
+          globalcors:
+            cors-configurations:
+              '[/api/**]':
+                allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+                allowed-methods: [GET, POST, PATCH, PUT, DELETE, OPTIONS]
+                allowed-headers: '*'
+                exposed-headers: [X-Correlation-Id, Location]
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: Inventory service
+        url: /aggregate/inventory-service/v3/api-docs
+      - name: Order service
+        url: /aggregate/order-service/v3/api-docs
+      - name: Payment service
+        url: /aggregate/payment-service/v3/api-docs
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    health:
+      probes:
+        enabled: true
