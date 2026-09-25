@@ -6,6 +6,7 @@ import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -14,14 +15,12 @@ import org.springframework.util.backoff.FixedBackOff;
 @Configuration(proxyBeanMethods = false)
 public class KafkaConfig {
 
+    /** Declares every saga topic up front (idempotent), before any listener subscribes. */
     @Bean
-    NewTopic orderCreatedTopic() {
-        return TopicBuilder.name(Topics.ORDER_CREATED).partitions(3).replicas(1).build();
-    }
-
-    @Bean
-    NewTopic orderStatusChangedTopic() {
-        return TopicBuilder.name(Topics.ORDER_STATUS_CHANGED).partitions(3).replicas(1).build();
+    KafkaAdmin.NewTopics sagaTopics() {
+        return new KafkaAdmin.NewTopics(Topics.ALL.stream()
+                .map(topic -> TopicBuilder.name(topic).partitions(Topics.PARTITIONS).replicas(1).build())
+                .toArray(NewTopic[]::new));
     }
 
     /**
